@@ -1,13 +1,13 @@
 /**
  * Created by chenhm on 26/07/2017.
  */
-const vClassDirect = /v-bind:class|:class/;
-const vOnDirect = /v-on:click|@click/;
+const vClassDirect = /(?:v-bind)?:class/;
 const vForDirect = /v-for/;
 const vShowDirect = /v-show/;
 const vIfDirect = /v-if/;
 const vHtmlDirect = /v-html/;
-const vBindDirect = /v-bind:|:/;
+const vBindDirect = /(?:v-bind)?:/;
+const vOnDirect = /v-on:/;
 const innerFilter = /{{.*?}}|[^{}]+/g;
 
 
@@ -20,7 +20,7 @@ const fillAttrs = makeMap("checked,compact,declare,defer,disabled,ismap,multiple
 
 
 //转义
-const escape = {
+const _escape = {
     '&': '&amp;',
     '<': '&lt;',
     '>': '&gt;',
@@ -31,13 +31,11 @@ const escape = {
 };
 
 //需要转义的内容
-const badChars = /[&<>"'`=]/g;
+const _badChars = /[&<>"'`=]/g;
 
-const eventRegister = {};
+function engine(html, data) {
 
-function translator(html, data) {
-
-    let reg = /(<[^>]*?>)/g,
+    let reg = /(<[^>]+>)/g,
         code = 'var r=[];',
         cursor = 0,
         match,
@@ -69,20 +67,16 @@ function translator(html, data) {
                                     fillAttrs[name] ? name : "";
 
                         if (vClassDirect.test(name)) {
-                            temporaryCode += `r.push(" class=",${value});`;
+                            temporaryCode += `r.push(" class='",${value},"'");`;
                         } else if (vForDirect.test(name)) {
                             value.replace(/(.*)\s+in\s+(.*)/, function (match, s1, s2) {
-                                if (s1.indexOf(',')) {
+                                if (s1.indexOf(',')>0) {
                                     let param = s1.replace(/\(|\)/g, '').split(',');
-                                    temporaryCode = `for(let [${param[1]}, ${param[0]}] of ${s2}.entries()){` + temporaryCode;
+                                    temporaryCode = `for(let [${param[1]}, ${param[0]}] of this.${s2}.entries()){` + temporaryCode;
                                 } else {
                                     temporaryCode = `for(let ${s1} of ${s2}){` + temporaryCode;
                                 }
                             })
-                        } else if (vOnDirect.test(name)) {
-                            let uid = uuid();
-                            temporaryCode += `r.push(" data-role-event=","${uid}");`;
-                            eventRegister[uid] = value;
                         } else if (vIfDirect.test(name)) {
                             code += `
                                 if(${value}){
@@ -95,11 +89,21 @@ function translator(html, data) {
                             `
                         } else if (vHtmlDirect.test(name)) {
                             quote = value
+                        } else if(vOnDirect.test(name)){
+                            value.replace(/(\w*?)\((.*?)\)/,function(match,handle,param){
+                                temporaryCode += `r.push(" ${name}=","${handle}(${param})");`
+                            })
                         } else {
                             if (vBindDirect.test(name)) {
-                                temporaryCode += `r.push(" ${name.substring(name.indexOf(':') + 1)}=",${value});`
+                                temporaryCode += `r.push(" ${name.substring(name.indexOf(':') + 1)}='",${value},"'");`
                             } else {
-                                temporaryCode += `r.push(" ${name}=",${value});`
+                                if(value.match(/{{(.*)}}/)){
+                                    value.replace(/{{(.*)}}/, function (match2, inner) {
+                                        temporaryCode += `r.push(" ${name.substring(name.indexOf(':') + 1)}='",_escapeExpression(${inner}),"'");`
+                                    })
+                                }else{
+                                    temporaryCode += `r.push(" ${name}='","${value}","'");`
+                                }
                             }
 
                         }
@@ -126,7 +130,7 @@ function translator(html, data) {
             line.replace(innerFilter, function (match) {
                 if (match.indexOf('{{') === 0) {
                     match.replace(/{{(.*)}}/, function (match2, inner) {
-                        code += `r.push(escapeExpression(${inner}));`;
+                        code += `r.push(_escapeExpression(${inner}));`;
                     })
                 } else {
                     code += `r.push("${match}");`
@@ -146,9 +150,9 @@ function translator(html, data) {
     code += 'return r.join("");';
 
 
-    data.escape = escape;
-    data.escapeChar = escapeChar;
-    data.escapeExpression = escapeExpression;
+    data._escape = _escape;
+    data._escapeChar = _escapeChar;
+    data._escapeExpression = _escapeExpression;
 
 
     for (let key in data) {
@@ -161,21 +165,6 @@ function translator(html, data) {
 
 }
 
-function uuid() {
-    let i, random;
-    let uuid = '';
-
-    for (i = 0; i < 32; i++) {
-        random = Math.random() * 16 | 0;
-        if (i === 8 || i === 12 || i === 16 || i === 20) {
-            uuid += '-';
-        }
-        uuid += (i === 12 ? 4 : (i === 16 ? (random & 3 | 8) : random))
-            .toString(16);
-    }
-    return uuid;
-}
-
 function makeMap(str) {
     let obj = {};
     let items = str.split(",");
@@ -183,18 +172,18 @@ function makeMap(str) {
     return obj;
 }
 
-function escapeChar(chr) {
-    return escape[chr];
+function _escapeChar(chr) {
+    return _escape[chr];
 }
 
-function escapeExpression(string) {
+function _escapeExpression(string) {
     if (typeof string !== 'string') {
         return string
     }
-    if (!badChars.test(string)) {
+    if (!_badChars.test(string)) {
         return string;
     }
-    return string.replace(badChars, escapeChar);
+    return string.replace(_badChars, _escapeChar);
 }
 
-module.exports = translator;
+module.exports = engine;
